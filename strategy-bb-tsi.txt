@@ -1,0 +1,153 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © maryamrostami598
+//@version=5
+
+indicator_name = "BB_strategy"
+initial_capital= 100
+strategy(indicator_name , initial_capital = initial_capital,default_qty_value = initial_capital, overlay=true)
+
+
+//  STRATEGY    ========================================================================================================================================================================
+
+[bb_Middle, bb_Upper, bb_Lower] = ta.bb(close, 20,2)
+tsi = ta.tsi(close, 2,7)
+signal_tsi= ta.ema(tsi, 4)
+atr=ta.atr(4)
+
+// plot(bb_Middle, "Basis", color=#FF6D00, offset = 0)
+// p1 = plot(bb_Upper, "Upper", color=#2962FF, offset = 0)
+// p2 = plot(bb_Lower, "Lower", color=#2962FF, offset = 0)
+// fill(p1, p2, title = "Background", color=color.rgb(33, 150, 243, 95))
+
+
+// plot(tsi, title="True Strength Index", color=#2962FF)
+// plot(signal_tsi, title="Signal", color=#E91E63)
+// hline(0, title="Zero", color=#787B86)
+//  TIME RUN RANGE  ========================================================================================================================================================================
+
+start_time= input.time(timestamp("1 Aug 2022"), title="start time", group="start strategy date")
+end_time= input.time(timestamp("1 Sep 2022"), title="end time", group="start strategy date")
+is_range_date() => time >= start_time and time <= end_time ? true : false
+
+//  CONDITION SET POSITION  ================================================================================================================================================================
+
+longCondition = is_range_date() and (ta.lowest(low,4) < bb_Lower  and signal_tsi < tsi )
+shortCondition = is_range_date()  and (ta.highest(high,4) > bb_Upper and signal_tsi > tsi)
+
+var is_short = false
+if strategy.position_size < 0
+    is_short := true
+if is_short == true
+    longCondition :=false
+if strategy.position_size > -1
+    is_short := false
+    
+//  SL / TP INPUT  ========================================================================================================================================================================
+
+sl_tp_type= input.session("bb","select SL / TP type", options=["fix","bb","trailing"],group="SL / Tp management")
+sl_input=input.float(1.0,title="SL% FIX"  ,group="SL / Tp management",step=0.5 )/100
+tp_input=input.float(3.0,title="TP% FIX"  ,group="SL / Tp management",step=0.5 )/100
+rbr_input=input.float(2.0,title="R/R (if select atr type) "  ,group="SL / Tp management",step=1 )
+float sl = na
+float tp = na
+sl_perc=0.0
+sl_perc2=0.0
+sl_perc2_tick=0.0
+entry_price = close
+sl_change = 0.0
+sl_change_abs = 0.0
+var float last_sl = na
+var float last_tp=na
+
+var int last_position_bar_index = na
+var float last_position_entry_price = na
+
+//  SL/TP CALCULATION ::: FIX / ATR / TRAIILING POIT & OFFSET  ========================================================================================================================
+    
+if sl_tp_type == "trailing"
+    sl := strategy.position_avg_price + (strategy.position_size > 0  ? -atr : atr)
+    sl_perc := ((strategy.position_avg_price - sl) * 100) / strategy.position_avg_price
+    sl_perc2 := sl_perc * 2
+    sl_perc2_tick := sl_perc2 / 100
+
+if sl_tp_type == "fix"
+    sl := strategy.position_avg_price * ( 1 + (strategy.position_size > 0 ? -sl_input : sl_input))
+    tp := strategy.position_avg_price * (1 + (strategy.position_size > 0  ? tp_input : -tp_input))
+    
+if sl_tp_type == "bb"
+    min_sl_price= (longCondition  ? low : high)  * (1 + (longCondition ? -0.0025: 0.0025)) 
+    sl := longCondition ? math.min(low,min_sl_price) : math.max(high,min_sl_price)
+    sl_change := (sl - entry_price) / entry_price
+    sl_change_abs := math.abs(sl_change)
+    tp := entry_price + (3 * sl_change_abs * entry_price * (longCondition ? 1 : -1)) 
+    //tp :=(min_sl_price * 3 ) + (strategy.position_size > 0 ? strategy.position_avg_price : -strategy.position_avg_price)
+    
+//  MONEY MANAGEMENT    ========================================================================================================================================================
+
+risk_perc = 0.01
+stop_change = (math.abs(entry_price - sl) * initial_capital) / entry_price
+//risk_value = strategy.equity * risk_perc
+risk_value = initial_capital * risk_perc
+position_value = (risk_value * initial_capital) / stop_change
+position_qty = position_value / entry_price
+
+//  CANDLE PATTERN    =========================================================================================================================================================================
+
+//bearish_engulf= ha_close < ha_open[1] and ha_open > ha_close[1] and (ha_close[1] >= ha_open[1]) and  (ha_open - ha_close) >= ((ha_close[1] - ha_open[1]) * 2) and (ha_open - ha_close) >= atr
+//bulish_engulf= ha_close > ha_open[1] and ha_open < ha_close[1] and (ha_close[1] <= ha_open[1]) and  (ha_close - ha_open) >= ((ha_open[1] - ha_close[1]) * 2) and (ha_close - ha_open) >= atr
+//plotchar(bearish_engulf, size=size.small, color=color.red, char="▾", location=location.abovebar, text="Bearish")
+//plotchar(bulish_engulf, size=size.small, color=color.green, char="▴",location=location.belowbar, text="Bulish")
+
+
+
+
+//  SET POSITION BUY/SELL     ====================================================================================================================================================================
+if longCondition and strategy.position_size == 0
+    last_sl := sl
+    last_tp := tp
+    strategy.entry("long", strategy.long, qty = position_qty)
+    strategy.exit("close", "long", stop=sl,limit=tp)
+
+if shortCondition and strategy.position_size == 0
+    last_sl := sl
+    last_tp := tp
+    strategy.entry("short", strategy.short, qty = position_qty)
+    strategy.exit("close", "short", stop=sl,limit=tp)
+
+
+
+  
+
+
+//  POSITION UI     ==================================================================================================================================================================================
+
+
+
+p_ep = plot(strategy.position_avg_price, color=color.new(color.gray, 0), linewidth=1, style=plot.style_linebr)
+p_sl = plot(strategy.position_size != 0 ? last_sl : na, color=color.new(color.red, 100), linewidth=1, style=plot.style_linebr)
+p_tp = plot(strategy.position_size != 0 ? last_tp : na, color=color.new(color.green, 100), linewidth=1, style=plot.style_linebr)
+
+fill(p_tp, p_ep, color.new(#089981, 80))
+fill(p_sl, p_ep, color.new(#f23645,80))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
